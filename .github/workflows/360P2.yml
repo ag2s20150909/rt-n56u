@@ -1,0 +1,109 @@
+# 自定义编译NEWIFI-MINI
+name: Build 360P2
+
+# Controls when the action will run. 
+on: 
+#  push:
+#  pull_request:
+#  workflow_dispatch:
+# 创建新版本开始编译
+  release:
+    types: [published]
+# 点击☆Star开始编译
+  watch:
+    types: [started]
+
+env:
+# 可替换 360P2 为你要编译的机型
+  BNAME: 360P2
+  images_dir: /opt/images
+  cac_branch: ConfigAndCustom
+  src_git: https://github.com/${{ github.repository }}.git
+  cac_tmp: /opt/cac
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-20.04
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Prepare environment
+        run: |
+          sudo apt update
+          sudo apt install libtool-bin gperf python-docutils autopoint gettext
+      - name: Config and Custom
+        run: |
+          git clone -b ${cac_branch} ${src_git} ${cac_tmp}
+          cd ${GITHUB_WORKSPACE}
+          cp -rf ${cac_tmp}/* ${GITHUB_WORKSPACE}
+          rm -rf ${cac_tmp}
+          cd ${GITHUB_WORKSPACE}/trunk/configs/templates
+          for m in $BNAME;
+          do
+          chmod 777 "$m.config"
+          #############################################################################################
+          # 自定义插件请参考源码trunk/configs/templates目录下的config文件并按照下面的格式添加即可
+          # 格式如下：
+          # sed -i '/自定义项=/d' $m.config #删除配置项
+          # echo "自定义项=y" >> $m.config #写入配置项
+          #############################################################################################
+          # "y"是添加插件 "n"是不添加插件
+          #############################################################################################
+          ##CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT
+          ##CONFIG_FIRMWARE_INCLUDE_NJIT_CLIENT
+          ##CONFIG_FIRMWARE_INCLUDE_GDUT_DRCOM=
+          ##CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS
+          ##CONFIG_FIRMWARE_INCLUDE_MINIDLNA
+          sed -i '/CONFIG_FIRMWARE_INCLUDE_OPENVPN=/d' $m.config
+          echo "CONFIG_FIRMWARE_INCLUDE_OPENVPN=n"  >> $m.config
+          sed -i '/CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=/d' $m.config
+          echo "CONFIG_FIRMWARE_INCLUDE_SCUTCLIENT=n"  >> $m.config
+          sed -i '/CONFIG_FIRMWARE_INCLUDE_NJIT_CLIENT=/d' $m.config
+          echo "CONFIG_FIRMWARE_INCLUDE_NJIT_CLIENT=n"  >> $m.config
+          sed -i '/CONFIG_FIRMWARE_INCLUDE_GDUT_DRCOM=/d' $m.config
+          echo "CONFIG_FIRMWARE_INCLUDE_GDUT_DRCOM=n"  >> $m.config
+          sed -i '/CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=/d' $m.config
+          echo "CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS=y"  >> $m.config
+          sed -i '/CONFIG_FIRMWARE_INCLUDE_MINIDLNA=/d' $m.config
+          echo "CONFIG_FIRMWARE_INCLUDE_MINIDLNA=y"  >> $m.config
+          #############################################################################################
+          done
+      - name: Run shellcheck
+        run: sh ${GITHUB_WORKSPACE}/trunk/tools/shellcheck.sh
+      - name: Prepare toolchain
+        run: |
+          cd toolchain-mipsel
+          sh dl_toolchain.sh
+      - name: Start build
+        run: |
+          cd trunk
+          mkdir -p ${images_dir}
+          for m in $BNAME; do fakeroot ./build_firmware_ci $m; \
+          if [ $? = 0 ]; then cp -f images/*.trx ${images_dir}/${m}_$(date +%Y%m%d).trx; else exit 1; fi; \
+          ./clear_tree_simple >/dev/null 2>&1; done
+      - name: Create archive
+        if: ${{ github.event_name != 'release' && success() }}
+        run: |
+          ls -lh ${images_dir}
+          GIT_VERSION=`git rev-parse --short=7 HEAD 2>/dev/null` && [ -n "$GIT_VERSION" ] && \
+          image_name=Padavan_$(date +%Y%m%d)_${BNAME}_${GIT_VERSION} || image_name=Padavan_$(date +%Y%m%d)_${BNAME}
+          cd ${images_dir}; md5sum *.trx |tee md5sum.txt; 7z a -mx=9 ${image_name}.7z ./*
+          echo "image_name=${image_name}" >> $GITHUB_ENV
+# 点击☆Star编译完成的固件到Artifacts下载
+      - name: Upload images to Artifacts
+        if: ${{ github.event_name != 'release' && success() }}
+        uses: actions/upload-artifact@v2.2.1
+        with:
+          name: ${{ env.image_name }}
+          path: ${{ env.images_dir }}/*.7z
+# 创建新版本编译完成的固件到Releases下载
+      - name: Upload images to Releases
+        if: ${{ github.event_name == 'release' && success() }}
+        uses: svenstaro/upload-release-action@2.2.0
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ env.images_dir }}/*.trx
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true
