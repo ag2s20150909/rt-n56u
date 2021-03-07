@@ -17,7 +17,7 @@ env:
 # 可替换 360P2 为你要编译的机型
   BNAME: 360P2
   images_dir: /opt/images
-  cac_branch: ConfigAndCustom
+  cac_branch: master
   src_git: https://github.com/${{ github.repository }}.git
   cac_tmp: /opt/cac
 
